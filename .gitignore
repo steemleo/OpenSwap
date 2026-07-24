@@ -1,0 +1,24 @@
+node_modules/
+dist/
+*.tgz
+.DS_Store
+*.log
+
+# secrets — never commit, even locally
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# tooling / editors
+coverage/
+.vitest/
+.vscode/
+.idea/
+*.tsbuildinfo
+*.sarif
+.npmrc
+
+# local-only session notes
+CLAUDE.local.md

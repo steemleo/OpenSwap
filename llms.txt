@@ -1,0 +1,32 @@
+# OpenSwap CLI
+
+> Open-source crosschain swap CLI by LeoDex, powered by the LeoKit API.
+> 30+ chains (Bitcoin, Ethereum, Solana, Arbitrum, Base, THORChain,
+> Chainflip, NEAR, and more). Noncustodial: quotes routes, mints deposit
+> addresses, users pay from their own wallet. JSON-first for AI agents and
+> trading bots.
+
+Install: `npx openswap` (Node >= 20). Binary: `openswap`.
+
+## Machine interface
+
+- Every command: `--json` → one envelope {schema_version, command, ok, data|error}
+- Streaming: `openswap watch --jsonl` (one JSON object per line, SSE-backed)
+- Exit codes: 0 ok, 2 usage, 3 auth, 4 no-route/policy, 5 upstream, 6 signer, 7 broadcast, 130 interrupt
+- Amounts: decimal strings. Assets: chain:symbol, "usdc on base", or CHAIN.SYMBOL-ADDRESS.
+
+## Key commands
+
+- openswap quote --json -a 100 -f arb:USDC -t btc:BTC — compare routes, read-only
+- openswap swap --json --yes -a … -f … -t … --to-address … --refund-address … — create deposit address + receipt
+- openswap status <receipt> --json — track until success | failed | refunded
+- openswap assets search <q> --json · openswap balances <addr> --chains ETH,ARB --json
+- openswap bot init|check|run — deterministic policy-gated automation (simulate by default)
+- openswap agent setup — install the Claude Code skill
+- openswap auth login — store an API key in the OS keychain (own key = affiliate fees)
+- API keys: created free + self-serve at https://dash.leokit.dev (not leodex.io, which is the consumer swap app)
+
+## Docs
+
+- AGENT-CONTRACT.md — full agent contract and recipes (in the npm package root)
+- SKILL.md — Claude Code skill (installable via `openswap agent setup`)

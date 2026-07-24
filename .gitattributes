@@ -1,0 +1,23 @@
+# Normalize line endings so a Windows/WSL contributor cannot produce a
+# whole-file diff. LF in the repository, native in the working tree.
+* text=auto eol=lf
+
+*.ts    text
+*.mjs   text
+*.js    text
+*.json  text
+*.md    text
+*.yml   text
+*.yaml  text
+*.txt   text
+
+*.png   binary
+*.ico   binary
+
+# Generated: keep them out of diffs and out of language statistics.
+package-lock.json   linguist-generated=true -diff
+bun.lock            linguist-generated=true -diff
+brand/otto.ansi.txt -diff
+
+# Brand assets are generated from brand/otto.pixels.json by `npm run brand`.
+brand/**/*.svg linguist-generated=true

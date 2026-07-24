@@ -1,0 +1,31 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Machine-mode purity (no ANSI in non-TTY output)
+        run: |
+          node dist/index.js </dev/null 2>&1 | node -e "
+            let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+              if(d.includes('\x1b[')){console.error('escape codes leaked into non-TTY output');process.exit(1)}
+            })"
+      - name: Simulated E2E (deposit lane, magic amounts, signer lane, isolation)
+        run: node scripts/e2e-sim.mjs

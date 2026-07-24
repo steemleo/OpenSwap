@@ -1,0 +1,33 @@
+{
+  "name": "Otto the Otter",
+  "grid": [
+    "..BB....BB..",
+    ".BBBBBBBBBB.",
+    ".BBBBBBBBBB.",
+    "BBBDBBBBDBBB",
+    "BBBBMMMMBBBB",
+    "BBMMMDDMMMBB",
+    ".BBMMMMMMBB.",
+    ".BBBBBBBBBB.",
+    ".BBBBHABBBB.",
+    "..BPHAAAPB..",
+    ".....AA.....",
+    "............"
+  ],
+  "palette": {
+    "B": "#A16A45",
+    "D": "#3D2A1D",
+    "M": "#EFDDC3",
+    "A": "#F59E0B",
+    "H": "#FFC24D",
+    "P": "#7A4E32"
+  },
+  "legend": {
+    "B": "fur",
+    "D": "ears' shadow, eyes, diamond core shadow",
+    "M": "muzzle and belly",
+    "A": "amber diamond — the brand accent",
+    "H": "diamond highlight",
+    "P": "paws"
+  }
+}
