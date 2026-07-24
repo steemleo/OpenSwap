@@ -1,7 +1,7 @@
 {
   "name": "openswap",
   "version": "0.1.0",
-  "description": "OpenSwap CLI by LeoDex \u2014 open-source crosschain swaps, right from your terminal. 30+ chains, for humans, AI agents, and bots. Powered by LeoKit.",
+  "description": "OpenSwap CLI by LeoDex — open-source crosschain swaps, right from your terminal. 30+ chains, for humans, AI agents, and bots. Powered by LeoKit.",
   "type": "module",
   "license": "MIT",
   "author": "LeoFinance <contact@leofinance.io>",
@@ -37,7 +37,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "brand": "node scripts/gen-brand.mjs",
-    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build",
+    "brand:social": "node scripts/gen-social-png.mjs"
   },
   "dependencies": {
     "@clack/prompts": "^0.11.0",
