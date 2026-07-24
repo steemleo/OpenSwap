@@ -1,22 +1,79 @@
 name: Release
+
+# Fires when a GitHub Release is published — NOT on a bare tag push. Tagging a
+# commit and deciding to ship it to npm are different acts, and only the second
+# should be able to put code on users' machines. `workflow_dispatch` is the
+# manual escape hatch.
 on:
-  push:
-    tags: ["v*"]
-permissions:
-  contents: read
-  id-token: write # npm provenance / trusted publishing
+  release:
+    types: [published]
+  workflow_dispatch:
+
+# Least privilege by default; the job escalates only what it needs.
+permissions: {}
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false # never cancel a half-finished publish
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write # npm provenance / trusted publishing (OIDC)
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          registry-url: "https://registry.npmjs.org"
-          cache: npm
+          node-version: 24
+          registry-url: "https://registry.npmjs.org" # still required for OIDC
+          # No dependency cache in a release build: a poisoned cache is a
+          # supply-chain hole, and it saves seconds we do not need.
+
+      # npm trusted publishing needs npm >= 11.5.1. Node 24 ships npm 11.x, but
+      # pin explicitly so a runner image change cannot silently downgrade us
+      # into token-auth fallback (which fails with ENEEDAUTH, since there is no
+      # token by design).
+      - name: Ensure npm supports trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      # Publishing a mislabelled build of money-moving software is exactly the
+      # mistake worth spending five seconds to prevent.
+      - name: Verify tag matches package.json
+        if: github.event_name == 'release'
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          TAG="${TAG_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          echo "tag=$TAG package.json=$PKG"
+          [ "$TAG" = "$PKG" ] || { echo "::error::tag $TAG != package.json $PKG"; exit 1; }
+
+      - name: Verify src/version.ts matches package.json
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          grep -q "VERSION = \"$PKG\"" src/version.ts \
+            || { echo "::error::src/version.ts out of sync with package.json"; exit 1; }
+
       - run: npm ci
-      - run: npm run typecheck && npm test && npm run build
-      # With npm Trusted Publishing configured for this package, OIDC handles
-      # auth and provenance — no NPM_TOKEN secret needed.
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: node scripts/e2e-sim.mjs
+
+      # Verifies our DEPENDENCY tree's registry signatures and provenance
+      # attestations — a different concern from our own publish credential.
+      - run: npm audit signatures
+
+      # No NODE_AUTH_TOKEN anywhere: OIDC handles auth and provenance together.
+      # Requires a trusted publisher configured at
+      # npmjs.com -> openswap -> Settings -> Trusted Publisher, pointing at this
+      # repository and this workflow filename.
       - run: npm publish --access public
