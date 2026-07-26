@@ -1,51 +1,62 @@
 name: Release
 
-# Publishes on a version tag. Handles BOTH phases of the npm auth story:
+# Fires when a GitHub Release is published — NOT on a bare tag push. Tagging a
+# commit and deciding to ship it to npm are different acts, and only the second
+# should be able to put code on users' machines. `workflow_dispatch` is the
+# manual escape hatch.
 #
-#   First publish — trusted publishing cannot be configured for a package that
-#                   does not exist yet (the setting lives on the package's own
-#                   settings page), so v0.1.0 goes out with a short-lived
-#                   granular token. Provenance does NOT require OIDC: a token
-#                   plus `id-token: write` and an explicit `--provenance`
-#                   produces the same Sigstore attestations.
-#   After that    — configure the trusted publisher on npmjs.com, delete the
-#                   NPM_TOKEN secret, and this workflow switches itself to OIDC
-#                   automatically (see "Determine auth mode"). Revoke the token
-#                   the same day.
+# Auth has two phases, and this workflow handles both:
+#
+#   First publish — trusted publishing CANNOT create a package. The trusted
+#                   publisher is configured on a package's own settings page,
+#                   which does not exist until the package does; npm surfaces
+#                   that as a misleading 404/ENEEDAUTH (npm/cli#9088) — as this
+#                   repo's own first two Release runs demonstrated. So v0.1.0
+#                   goes out with a short-lived granular token. Provenance does
+#                   NOT require OIDC: those same failed runs signed a valid
+#                   Sigstore statement before auth was ever checked.
+#   After that    — configure the trusted publisher, delete the NPM_TOKEN
+#                   secret, and this workflow switches to OIDC by itself.
+#                   Revoke the token the same day.
 
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  id-token: write # Sigstore provenance — required in BOTH auth modes
+# Least privilege by default; the job escalates only what it needs.
+permissions: {}
 
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+  group: release-${{ github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false # never cancel a half-finished publish
 
 jobs:
   publish:
     runs-on: ubuntu-latest # cloud-hosted runner required; self-hosted is not eligible
-    environment: release # lets you require a manual approval before any publish
+    environment: release # manual approval gate before anything reaches the registry
+    permissions:
+      contents: read
+      id-token: write # Sigstore provenance — required in BOTH auth modes
     steps:
       - uses: actions/checkout@v4
         with:
+          # Publish the exact commit the Release points at, not whatever main
+          # has drifted to since.
+          ref: ${{ github.event.release.tag_name || github.ref }}
           # Don't leave a usable GITHUB_TOKEN in .git/config for later steps —
           # nothing here pushes, so persisting it is pure attack surface.
           persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: "https://registry.npmjs.org"
           cache: npm
 
-      # setup-node's Node 22 ships npm 10.9, which cannot do OIDC. Trusted
-      # publishing needs >= 11.5.1, and the failure mode is a misleading
-      # ENEEDAUTH rather than a version error — so pin it explicitly.
+      # Trusted publishing needs npm >= 11.5.1 and the failure mode is a
+      # misleading ENEEDAUTH, not a version error. Pin it explicitly so a
+      # runner image change cannot silently downgrade us back into that.
       - name: Use an npm that supports trusted publishing
         run: |
           npm i -g npm@latest
@@ -53,16 +64,22 @@ jobs:
 
       - run: npm ci
 
-      # A mislabelled build of a CLI that moves user funds is not recoverable
+      # A mislabelled build of a CLI that moves user funds cannot be taken back
       # once published. Fail before the registry ever sees it.
       - name: Version guards
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
           PKG="$(node -p "require('./package.json').version")"
           SRC="$(node -p "require('fs').readFileSync('src/version.ts','utf8').match(/VERSION\s*=\s*\"([^\"]+)\"/)[1]")"
-          echo "tag=$TAG  package.json=$PKG  src/version.ts=$SRC"
-          [ "$TAG" = "$PKG" ] || { echo "::error::git tag ($TAG) != package.json ($PKG)"; exit 1; }
+          echo "package.json=$PKG  src/version.ts=$SRC  release_tag=${RELEASE_TAG:-<none>}"
+          # The CLI's own --version must match what the registry will serve.
           [ "$SRC" = "$PKG" ] || { echo "::error::src/version.ts ($SRC) != package.json ($PKG)"; exit 1; }
+          # On a Release the tag is authoritative. workflow_dispatch has no tag,
+          # so only the internal consistency check above applies.
+          if [ -n "$RELEASE_TAG" ]; then
+            [ "${RELEASE_TAG#v}" = "$PKG" ] || { echo "::error::release tag ($RELEASE_TAG) != package.json ($PKG)"; exit 1; }
+          fi
 
       - name: Verify
         run: |
@@ -71,8 +88,8 @@ jobs:
           npm run build
           node scripts/e2e-sim.mjs
 
-      # Record exactly what is in the tarball — the release log is the audit
-      # trail when someone asks what a given version shipped.
+      # Record exactly what shipped — the release log is the audit trail when
+      # someone asks what a given version contained.
       - name: Show tarball contents
         run: npm pack --dry-run
 
