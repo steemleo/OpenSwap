@@ -12,7 +12,7 @@ humans, AI agents, and trading bots.
 By [LeoDex](https://leodex.io) · powered by the LeoKit API.
 
 ```bash
-npx openswap
+npx openswap@latest
 ```
 
 OpenSwap is noncustodial by design: it finds the route, mints a deposit
@@ -88,7 +88,7 @@ Node ≥ 20 on macOS or Linux (Windows works via WSL; the OS keychain
 integration covers macOS and Linux, with a permission-locked file fallback).
 
 ```bash
-npm install -g openswap   # or: npx openswap
+npm install -g openswap   # or: npx openswap@latest
 ```
 
 Uninstall: `npm uninstall -g openswap`, then optionally remove local state at

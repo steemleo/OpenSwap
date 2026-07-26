@@ -1,7 +1,7 @@
 # Getting started
 
 ```bash
-npx openswap            # zero install, zero config — the intent menu
+npx openswap@latest     # zero install, zero config — the intent menu
 ```
 
 Or install it:
@@ -12,6 +12,15 @@ openswap doctor         # checks your terminal, credentials, and API reachabilit
 ```
 
 The CLI works out of the box on a built-in community key. No signup.
+
+**Use `@latest`, not bare `npx openswap`.** npx caches by package name and
+never expires that cache, so a bare `npx openswap` keeps running whichever
+build you first fetched — including after a release that fixes a bug affecting
+your funds. `@latest` always resolves against the registry.
+
+In human mode the CLI tells you when a newer version exists (checked at most
+once a day, from cache, never blocking a command, never in `--json`/`--jsonl`
+output). Set `OPENSWAP_NO_UPDATE_CHECK=1` to silence it — sensible in CI.
 
 ## First quote (read-only, no wallet)
 

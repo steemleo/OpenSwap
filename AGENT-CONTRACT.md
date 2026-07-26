@@ -6,7 +6,7 @@ contract — print it any time with `openswap agent docs`.
 
 ## Invocation & environment
 
-- The binary is `openswap` on PATH (or `npx -y openswap`). Never build from
+- The binary is `openswap` on PATH (or `npx -y openswap@latest`). Never build from
   source, never explore a repository to "find" the CLI, never run bare
   `--help` exploration — this contract is complete.
 - Zero-config: a built-in community key works immediately. A user's own key

@@ -7,7 +7,7 @@ description: Execute crosschain crypto swaps, quotes, and route comparisons with
 
 Everything you need is in this file. Do NOT explore repositories, read source
 code, run `--help`, or build anything — the CLI is installed as `openswap`
-(fallback: `npx -y openswap`). All financial data comes from command output;
+(fallback: `npx -y openswap@latest`). All financial data comes from command output;
 never invent routes, fees, addresses, or statuses.
 
 ## The flow — follow exactly

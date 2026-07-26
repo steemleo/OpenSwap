@@ -6,7 +6,7 @@
 > addresses, users pay from their own wallet. JSON-first for AI agents and
 > trading bots.
 
-Install: `npx openswap` (Node >= 20). Binary: `openswap`.
+Install: `npx openswap@latest` (Node >= 20.19). Binary: `openswap`.
 
 ## Machine interface
 

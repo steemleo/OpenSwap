@@ -1,8 +1,9 @@
 import { errorEnvelope, successEnvelope } from "./json.js";
 import { errorBlock } from "./components.js";
 import { asCliError } from "../core/errors.js";
-import { termCaps } from "./theme.js";
+import { dim, termCaps } from "./theme.js";
 import { isTestMode } from "../core/paths.js";
+import { pendingUpdateNotice, refreshUpdateCache } from "../core/update.js";
 
 export type OutputMode = "human" | "plain" | "json" | "jsonl";
 
@@ -32,6 +33,15 @@ export function resolveOutput(command: string, flags: ModeFlags): OutputContext 
   // so the stdout contract stays byte-pure. Humans see the TEST header badge.
   if (mode !== "human" && isTestMode()) {
     process.stderr.write("[test mode] simulated environment — no real funds move\n");
+  }
+  // Humans get told when they are on a stale build; agents and pipes never do —
+  // a version notice in machine output would break the envelope contract.
+  // Prints from cache and refreshes in the background, so no command ever waits
+  // on the registry. See core/update.ts for why this matters for npx.
+  if (mode === "human" && !isTestMode()) {
+    const notice = pendingUpdateNotice();
+    if (notice) process.stderr.write(`${dim(notice)}\n`);
+    refreshUpdateCache();
   }
   return { mode, noInput, command };
 }
