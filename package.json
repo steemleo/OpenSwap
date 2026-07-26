@@ -7,12 +7,12 @@
   "author": "LeoFinance <contact@leofinance.io>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/steemleo/OpenSwap.git"
+    "url": "git+https://github.com/steemleo/openswap.git"
   },
   "bugs": {
-    "url": "https://github.com/steemleo/OpenSwap/issues"
+    "url": "https://github.com/steemleo/openswap/issues"
   },
-  "homepage": "https://github.com/steemleo/OpenSwap#readme",
+  "homepage": "https://github.com/steemleo/openswap#readme",
   "publishConfig": {
     "access": "public",
     "provenance": true

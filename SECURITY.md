@@ -19,7 +19,7 @@ finding. Do not use `openswap feedback` — it is not a confidential channel.**
 Report through either:
 
 1. **GitHub private vulnerability reporting** (preferred) — the *Report a
-   vulnerability* button on the [Security tab](https://github.com/steemleo/OpenSwap/security/advisories/new).
+   vulnerability* button on the [Security tab](https://github.com/steemleo/openswap/security/advisories/new).
    This opens a private advisory visible only to you and the maintainers.
 2. **Email** `contact@leofinance.io` with `SECURITY` in the subject.
 

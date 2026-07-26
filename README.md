@@ -1,6 +1,6 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/steemleo/OpenSwap/main/brand/banner-readme-dark.svg">
-  <img alt="OpenSwap — open-source crosschain swaps, right from your terminal" src="https://raw.githubusercontent.com/steemleo/OpenSwap/main/brand/banner-readme-light.svg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/steemleo/openswap/main/brand/banner-readme-dark.svg">
+  <img alt="OpenSwap — open-source crosschain swaps, right from your terminal" src="https://raw.githubusercontent.com/steemleo/openswap/main/brand/banner-readme-light.svg" width="100%">
 </picture>
 
 # OpenSwap CLI
@@ -57,7 +57,7 @@ the terminal any time; `openswap resume` picks the swap back up.
 ## For agents
 
 Every command takes `--json` and returns a versioned envelope with stable exit
-codes. See [AGENT-CONTRACT.md](https://github.com/steemleo/OpenSwap/blob/main/AGENT-CONTRACT.md),
+codes. See [AGENT-CONTRACT.md](https://github.com/steemleo/openswap/blob/main/AGENT-CONTRACT.md),
 or run `openswap agent setup` to install the Claude Code skill.
 
 ## For bots
@@ -66,13 +66,13 @@ or run `openswap agent setup` to install the Claude Code skill.
 ceilings, fee caps, cooldowns, a kill-switch file). A script or LLM may
 *propose* a trade; only the policy can *authorize* it. `bot run` simulates by
 default and broadcasts only with `--live`.
-See [docs/bot-mode.md](https://github.com/steemleo/OpenSwap/blob/main/docs/bot-mode.md).
+See [docs/bot-mode.md](https://github.com/steemleo/openswap/blob/main/docs/bot-mode.md).
 
 ## Keys, fees — and forks
 
 Works out of the box on a built-in community key. Using your own LeoKit API
 key routes affiliate fees to **you** — which is also why we genuinely welcome
-forks: see [docs/forking.md](https://github.com/steemleo/OpenSwap/blob/main/docs/forking.md).
+forks: see [docs/forking.md](https://github.com/steemleo/openswap/blob/main/docs/forking.md).
 
 ## Privacy & network
 
@@ -98,12 +98,12 @@ Uninstall: `npm uninstall -g openswap`, then optionally remove local state at
 
 ## Docs
 
-[Getting started](https://github.com/steemleo/OpenSwap/blob/main/docs/getting-started.md) ·
-[Commands](https://github.com/steemleo/OpenSwap/blob/main/docs/commands.md) ·
-[Architecture](https://github.com/steemleo/OpenSwap/blob/main/docs/architecture.md) ·
-[Security model](https://github.com/steemleo/OpenSwap/blob/main/docs/security.md) ·
-[Bot mode](https://github.com/steemleo/OpenSwap/blob/main/docs/bot-mode.md) ·
-[Brand](https://github.com/steemleo/OpenSwap/blob/main/brand/BRAND.md) ·
-[Contributing](https://github.com/steemleo/OpenSwap/blob/main/CONTRIBUTING.md)
+[Getting started](https://github.com/steemleo/openswap/blob/main/docs/getting-started.md) ·
+[Commands](https://github.com/steemleo/openswap/blob/main/docs/commands.md) ·
+[Architecture](https://github.com/steemleo/openswap/blob/main/docs/architecture.md) ·
+[Security model](https://github.com/steemleo/openswap/blob/main/docs/security.md) ·
+[Bot mode](https://github.com/steemleo/openswap/blob/main/docs/bot-mode.md) ·
+[Brand](https://github.com/steemleo/openswap/blob/main/brand/BRAND.md) ·
+[Contributing](https://github.com/steemleo/openswap/blob/main/CONTRIBUTING.md)
 
 MIT © LeoFinance

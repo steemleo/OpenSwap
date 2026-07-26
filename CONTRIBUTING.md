@@ -5,7 +5,7 @@ Thanks for helping make crosschain swaps feel native to the terminal.
 ## Setup
 
 ```bash
-git clone https://github.com/steemleo/OpenSwap.git && cd OpenSwap
+git clone https://github.com/steemleo/openswap.git && cd OpenSwap
 bun install            # or npm install
 bun run typecheck && bun run test && bun run build
 node dist/index.js doctor
