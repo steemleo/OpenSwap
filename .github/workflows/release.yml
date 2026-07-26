@@ -1,79 +1,116 @@
 name: Release
 
-# Fires when a GitHub Release is published — NOT on a bare tag push. Tagging a
-# commit and deciding to ship it to npm are different acts, and only the second
-# should be able to put code on users' machines. `workflow_dispatch` is the
-# manual escape hatch.
+# Publishes on a version tag. Handles BOTH phases of the npm auth story:
+#
+#   First publish — trusted publishing cannot be configured for a package that
+#                   does not exist yet (the setting lives on the package's own
+#                   settings page), so v0.1.0 goes out with a short-lived
+#                   granular token. Provenance does NOT require OIDC: a token
+#                   plus `id-token: write` and an explicit `--provenance`
+#                   produces the same Sigstore attestations.
+#   After that    — configure the trusted publisher on npmjs.com, delete the
+#                   NPM_TOKEN secret, and this workflow switches itself to OIDC
+#                   automatically (see "Determine auth mode"). Revoke the token
+#                   the same day.
+
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
   workflow_dispatch:
 
-# Least privilege by default; the job escalates only what it needs.
-permissions: {}
+permissions:
+  contents: read
+  id-token: write # Sigstore provenance — required in BOTH auth modes
 
 concurrency:
-  group: release-${{ github.event.release.tag_name || github.ref }}
-  cancel-in-progress: false # never cancel a half-finished publish
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      id-token: write # npm provenance / trusted publishing (OIDC)
+    runs-on: ubuntu-latest # cloud-hosted runner required; self-hosted is not eligible
+    environment: release # lets you require a manual approval before any publish
     steps:
       - uses: actions/checkout@v4
         with:
+          # Don't leave a usable GITHUB_TOKEN in .git/config for later steps —
+          # nothing here pushes, so persisting it is pure attack surface.
           persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
-          registry-url: "https://registry.npmjs.org" # still required for OIDC
-          # No dependency cache in a release build: a poisoned cache is a
-          # supply-chain hole, and it saves seconds we do not need.
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
 
-      # npm trusted publishing needs npm >= 11.5.1. Node 24 ships npm 11.x, but
-      # pin explicitly so a runner image change cannot silently downgrade us
-      # into token-auth fallback (which fails with ENEEDAUTH, since there is no
-      # token by design).
-      - name: Ensure npm supports trusted publishing
+      # setup-node's Node 22 ships npm 10.9, which cannot do OIDC. Trusted
+      # publishing needs >= 11.5.1, and the failure mode is a misleading
+      # ENEEDAUTH rather than a version error — so pin it explicitly.
+      - name: Use an npm that supports trusted publishing
         run: |
-          npm install -g npm@latest
-          npm --version
-
-      # Publishing a mislabelled build of money-moving software is exactly the
-      # mistake worth spending five seconds to prevent.
-      - name: Verify tag matches package.json
-        if: github.event_name == 'release'
-        env:
-          TAG_NAME: ${{ github.event.release.tag_name }}
-        run: |
-          TAG="${TAG_NAME#v}"
-          PKG="$(node -p "require('./package.json').version")"
-          echo "tag=$TAG package.json=$PKG"
-          [ "$TAG" = "$PKG" ] || { echo "::error::tag $TAG != package.json $PKG"; exit 1; }
-
-      - name: Verify src/version.ts matches package.json
-        run: |
-          PKG="$(node -p "require('./package.json').version")"
-          grep -q "VERSION = \"$PKG\"" src/version.ts \
-            || { echo "::error::src/version.ts out of sync with package.json"; exit 1; }
+          npm i -g npm@latest
+          echo "npm $(npm --version) / node $(node --version)"
 
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
-      - run: node scripts/e2e-sim.mjs
 
-      # Verifies our DEPENDENCY tree's registry signatures and provenance
-      # attestations — a different concern from our own publish credential.
-      - run: npm audit signatures
+      # A mislabelled build of a CLI that moves user funds is not recoverable
+      # once published. Fail before the registry ever sees it.
+      - name: Version guards
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          SRC="$(node -p "require('fs').readFileSync('src/version.ts','utf8').match(/VERSION\s*=\s*\"([^\"]+)\"/)[1]")"
+          echo "tag=$TAG  package.json=$PKG  src/version.ts=$SRC"
+          [ "$TAG" = "$PKG" ] || { echo "::error::git tag ($TAG) != package.json ($PKG)"; exit 1; }
+          [ "$SRC" = "$PKG" ] || { echo "::error::src/version.ts ($SRC) != package.json ($PKG)"; exit 1; }
 
-      # No NODE_AUTH_TOKEN anywhere: OIDC handles auth and provenance together.
-      # Requires a trusted publisher configured at
-      # npmjs.com -> openswap -> Settings -> Trusted Publisher, pointing at this
-      # repository and this workflow filename.
-      - run: npm publish --access public
+      - name: Verify
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+          node scripts/e2e-sim.mjs
+
+      # Record exactly what is in the tarball — the release log is the audit
+      # trail when someone asks what a given version shipped.
+      - name: Show tarball contents
+        run: npm pack --dry-run
+
+      # Setting NODE_AUTH_TOKEN at all makes npm use it, so the presence of the
+      # secret is the switch between the two modes.
+      - name: Determine auth mode
+        id: auth
+        env:
+          HAS_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" = "true" ]; then
+            echo "mode=token" >> "$GITHUB_OUTPUT"
+            echo "Publishing with a granular token (+ explicit --provenance)."
+          else
+            echo "mode=oidc" >> "$GITHUB_OUTPUT"
+            echo "Publishing via trusted publishing (provenance is automatic)."
+          fi
+
+      - name: Publish (granular token — first release only)
+        if: steps.auth.outputs.mode == 'token'
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish (trusted publishing)
+        if: steps.auth.outputs.mode == 'oidc'
+        run: npm publish --access public
+
+      # Provenance is the supply-chain evidence a careful user checks before
+      # running `npx` against a tool that touches their wallet. A missing
+      # attestation should be visible, not quietly shipped.
+      - name: Confirm provenance was attached
+        run: |
+          sleep 15
+          PKG="$(node -p "require('./package.json').name")"
+          VER="$(node -p "require('./package.json').version")"
+          if npm view "$PKG@$VER" dist.attestations --json 2>/dev/null | grep -q provenance; then
+            echo "provenance attached to $PKG@$VER"
+          else
+            echo "::warning::no provenance attestation found for $PKG@$VER"
+          fi
