@@ -26,5 +26,6 @@ coverage/
 # single lockfile source of truth: package-lock.json
 bun.lock
 
-# local-only agent instructions (untracked)
+# local-only working instructions for our own tooling (never published)
 CLAUDE.md
+AGENTS.md
