@@ -92,4 +92,16 @@ const leaked = (Array.isArray(receipts.data) ? receipts.data : receipts.data?.re
 if (leaked.length > 0) fail("simulated receipts leaked into live store", leaked);
 console.log("isolation ok     no ost_ receipts outside test mode");
 
+// ── QR renderer: exercised against the BUILT artifact ───────────────────
+// renderQr swallows every error and simply shows no QR, so a broken renderer
+// is invisible at runtime. `qrcode` is also CommonJS with a dynamic require of
+// node builtins — the one dependency that does not survive bundling unaided.
+// Test mode suppresses QRs in the swap flow, so `doctor` is where the renderer
+// can be reached from the compiled bundle.
+const health = cli("doctor", "--json");
+const qrCheck = (health.data?.checks ?? []).find((c) => c.name === "QR renderer");
+if (!qrCheck) fail("doctor no longer reports a QR renderer check", health.data);
+if (qrCheck.state !== "ok") fail(`QR renderer is not ok: ${qrCheck.detail}`, qrCheck);
+console.log(`qr renderer ok   ${qrCheck.detail}`);
+
 console.log("E2E-SIM PASS");

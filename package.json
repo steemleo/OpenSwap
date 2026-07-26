@@ -42,21 +42,19 @@
     "prepublishOnly": "npm run typecheck && npm run test && npm run build",
     "brand:social": "node scripts/gen-social-png.mjs"
   },
-  "dependencies": {
+  "devDependencies": {
     "@clack/prompts": "^0.11.0",
     "@noble/hashes": "^2.2.0",
+    "@types/node": "^20.17.0",
+    "@types/qrcode": "^1.5.5",
     "citty": "^0.1.6",
     "picocolors": "^1.1.1",
     "qrcode": "^1.5.4",
-    "viem": "^2.55.2",
-    "zod": "^3.24.1"
-  },
-  "devDependencies": {
-    "@types/node": "^20.17.0",
-    "@types/qrcode": "^1.5.5",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "viem": "^2.55.2",
+    "vitest": "^2.1.8",
+    "zod": "^3.24.1"
   },
   "keywords": [
     "open-source",

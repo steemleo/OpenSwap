@@ -109,6 +109,29 @@ export default defineCommand({
       }
       checks.push({ name: "Config", state: "ok", detail: configDir() });
 
+      // renderQr swallows every error and simply shows no QR, so a broken QR
+      // renderer is INVISIBLE at runtime — it has failed silently in this CLI
+      // before. It is also the one dependency that does not survive bundling
+      // without help. Exercise it here so a build that cannot draw a QR is
+      // detectable from a single machine-readable command.
+      try {
+        const { renderQr } = await import("../render/qr.js");
+        const probe = await renderQr("bitcoin:bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4?amount=0.05");
+        checks.push(
+          probe.ok
+            ? { name: "QR renderer", state: "ok", detail: `${probe.lines.length} rows` }
+            : probe.reason === "generation-failed"
+              ? { name: "QR renderer", state: "fail", detail: "QR generation failed — deposit screens will show no QR" }
+              : { name: "QR renderer", state: "warn", detail: `unavailable in this terminal (${probe.reason})` }
+        );
+      } catch (err) {
+        checks.push({
+          name: "QR renderer",
+          state: "fail",
+          detail: `QR renderer could not load: ${err instanceof Error ? err.message : String(err)}`
+        });
+      }
+
       const failed = checks.filter((c) => c.state === "fail");
       if (ctx.mode === "json") {
         // Same rule as `bot check`: an unhealthy result must not report ok:true
