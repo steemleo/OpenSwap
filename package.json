@@ -18,20 +18,22 @@
     "provenance": true
   },
   "bin": {
-    "openswap": "./dist/index.js"
+    "openswap": "dist/index.js"
   },
   "files": [
     "dist",
     "SKILL.md",
     "AGENT-CONTRACT.md",
     "llms.txt",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19.0"
   },
   "scripts": {
     "build": "tsup",
+    "prepack": "npm run build",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

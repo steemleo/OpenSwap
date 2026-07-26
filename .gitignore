@@ -22,3 +22,6 @@ coverage/
 
 # local-only session notes
 CLAUDE.local.md
+
+# single lockfile source of truth: package-lock.json
+bun.lock
