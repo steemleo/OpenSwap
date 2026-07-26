@@ -21,7 +21,10 @@ coverage/
 .npmrc
 
 # local-only session notes
-CLAUDE.local.md
+*.local.md
 
 # single lockfile source of truth: package-lock.json
 bun.lock
+
+# local-only agent instructions (untracked)
+CLAUDE.md
