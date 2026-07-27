@@ -1,6 +1,6 @@
 {
   "name": "openswap",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenSwap CLI by LeoDex — open-source crosschain swaps, right from your terminal. 30+ chains, for humans, AI agents, and bots. Powered by LeoKit.",
   "type": "module",
   "license": "MIT",
@@ -53,7 +53,7 @@
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",
     "viem": "^2.55.2",
-    "vitest": "^2.1.8",
+    "vitest": "^4.1.10",
     "zod": "^3.24.1"
   },
   "keywords": [
