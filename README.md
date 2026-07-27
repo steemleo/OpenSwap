@@ -106,4 +106,4 @@ Uninstall: `npm uninstall -g openswap`, then optionally remove local state at
 [Brand](https://github.com/steemleo/openswap/blob/main/brand/BRAND.md) ·
 [Contributing](https://github.com/steemleo/openswap/blob/main/CONTRIBUTING.md)
 
-MIT © LeoFinance
+MIT © LeoDex

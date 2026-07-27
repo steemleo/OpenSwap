@@ -189,3 +189,126 @@ describe("executionLane", () => {
     expect(executionLane(mk("rango", true), "BTC.BTC")).toBe("deposit_address");
   });
 });
+
+// Relay lists its relayer fee as a subtotal AND its two components, so summing
+// every line counts it twice. Ground truth for the numbers below comes from a
+// real funded swap (receipt os_ms2atn8ve4dcfece, 6 USDC ARB->BASE): relay's own
+// API reported $0.031342 of fees, the wallet lost 0.031964 USDC, and the CLI
+// displayed $0.07 — roughly double.
+describe("normalizeQuoteResponse — nested provider fees are not double-counted", () => {
+  const offer = (fees: unknown[]) => ({
+    quote_id: "q",
+    timestamp: "t",
+    quotes: [
+      {
+        protocol: "relay",
+        data: {
+          protocol: "relay",
+          expected_amount_out: "5968036",
+          out_asset_decimal: 6,
+          in_asset_decimal: 6,
+          total_swap_seconds: 3,
+          expires_at: 0,
+          ttl_seconds: 30,
+          fees,
+          route: []
+        }
+      }
+    ]
+  }) as unknown as WireQuoteResponse;
+
+  const USDC = "ARB.USDC-0xaf88d065e77c8cc2239327c5edb3a432268e5831";
+  const ETH = "ARB.ETH-0x0000000000000000000000000000000000000000";
+
+  // Exactly the six lines from the funded swap.
+  const REAL_SWAP_FEES = [
+    { type: "gas Fee", asset: ETH, amount: "0.0000014101214292", usd: 0.0027 },
+    { type: "relayer Fee", asset: USDC, amount: "0.031356", usd: 0.031356 },
+    { type: "relayerGas Fee", asset: USDC, amount: "0.010785", usd: 0.010785 },
+    { type: "relayerService Fee", asset: USDC, amount: "0.020571", usd: 0.020571 },
+    { type: "app Fee", asset: USDC, amount: "0.0006", usd: 0.0006 },
+    { type: "subsidized Fee", asset: USDC, amount: "0", usd: 0 }
+  ];
+
+  it("counts the relayer fee once, not once per component", () => {
+    const set = normalizeQuoteResponse(offer(REAL_SWAP_FEES), {
+      fromAsset: "ARB.USDC",
+      toAsset: "BASE.USDC",
+      amountDisplay: "6"
+    });
+    const o = set.offers[0]!;
+    // gas 0.0027 + relayer 0.031356 + app 0.0006 = 0.034656
+    // (the old behaviour also added the two components: 0.066012)
+    expect(o.feesTotalUsd).toBeCloseTo(0.034656, 6);
+    expect(o.feesTotalUsd!).toBeLessThan(0.05);
+  });
+
+  it("keeps every line visible — collapsing the total must not hide a fee", () => {
+    const set = normalizeQuoteResponse(offer(REAL_SWAP_FEES), {
+      fromAsset: "ARB.USDC",
+      toAsset: "BASE.USDC",
+      amountDisplay: "6"
+    });
+    const types = set.offers[0]!.fees.map((f) => f.type);
+    expect(types).toContain("relayerGas Fee");
+    expect(types).toContain("relayerService Fee");
+    expect(types).toHaveLength(6);
+  });
+
+  it("leaves a flat fee list untouched", () => {
+    // mayachain-shaped: three independent fees, nothing nested
+    const flat = [
+      { type: "Affiliate Fee", asset: USDC, amount: "1", usd: 1 },
+      { type: "Outbound Fee", asset: USDC, amount: "2", usd: 2 },
+      { type: "Network Fee", asset: USDC, amount: "3", usd: 3 }
+    ];
+    const set = normalizeQuoteResponse(offer(flat), { fromAsset: "A", toAsset: "B", amountDisplay: "6" });
+    expect(set.offers[0]!.feesTotalUsd).toBeCloseTo(6, 6);
+  });
+
+  it("does not collapse across different assets", () => {
+    // same arithmetic, but the 'parent' is denominated in ETH — coincidence, not containment
+    const crossAsset = [
+      { type: "gas Fee", asset: ETH, amount: "3", usd: 3 },
+      { type: "a Fee", asset: USDC, amount: "1", usd: 1 },
+      { type: "b Fee", asset: USDC, amount: "2", usd: 2 }
+    ];
+    const set = normalizeQuoteResponse(offer(crossAsset), { fromAsset: "A", toAsset: "B", amountDisplay: "6" });
+    expect(set.offers[0]!.feesTotalUsd).toBeCloseTo(6, 6);
+  });
+
+  it("does not collapse when a zero-amount line makes the sum trivially match", () => {
+    const withZero = [
+      { type: "x Fee", asset: USDC, amount: "5", usd: 5 },
+      { type: "y Fee", asset: USDC, amount: "5", usd: 5 },
+      { type: "z Fee", asset: USDC, amount: "0", usd: 0 }
+    ];
+    const set = normalizeQuoteResponse(offer(withZero), { fromAsset: "A", toAsset: "B", amountDisplay: "6" });
+    expect(set.offers[0]!.feesTotalUsd).toBeCloseTo(10, 6);
+  });
+
+  it("does not collapse when names nest but the arithmetic does not", () => {
+    // relay-shaped names, but the components do NOT sum to the parent
+    const mismatched = [
+      { type: "relayer Fee", asset: USDC, amount: "0.05", usd: 0.05 },
+      { type: "relayerGas Fee", asset: USDC, amount: "0.01", usd: 0.01 },
+      { type: "relayerService Fee", asset: USDC, amount: "0.02", usd: 0.02 }
+    ];
+    const set = normalizeQuoteResponse(offer(mismatched), { fromAsset: "A", toAsset: "B", amountDisplay: "6" });
+    expect(set.offers[0]!.feesTotalUsd).toBeCloseTo(0.08, 6);
+    expect(set.offers[0]!.fees.every((f) => f.component_of === undefined)).toBe(true);
+  });
+
+  it("labels each component with the parent that already counts it", () => {
+    const set = normalizeQuoteResponse(offer(REAL_SWAP_FEES), {
+      fromAsset: "ARB.USDC",
+      toAsset: "BASE.USDC",
+      amountDisplay: "6"
+    });
+    const byType = Object.fromEntries(set.offers[0]!.fees.map((f) => [f.type, f.component_of]));
+    expect(byType["relayerGas Fee"]).toBe("relayer Fee");
+    expect(byType["relayerService Fee"]).toBe("relayer Fee");
+    expect(byType["relayer Fee"]).toBeUndefined();
+    expect(byType["app Fee"]).toBeUndefined();
+  });
+});

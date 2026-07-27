@@ -141,7 +141,9 @@ function reviewRows(opts: {
       const usd = formatUsd(f.usd);
       rows.push([
         i === 0 ? "Fees" : "",
-        `${dim(glyph("middot"))} ${sanitize(f.type)}${f.amount !== null && f.amount !== undefined ? `  ${f.amount} ${assetSymbol(sanitize(f.asset))}` : ""}${usd ? ` ${dim(`≈ ${usd}`)}` : f.usd === null ? ` ${dim("(not priced)")}` : ""}`
+        // A component line's value is already inside its parent. Say so, or the
+        // list visibly fails to add up to the total and reads as a bug.
+        `${dim(glyph("middot"))} ${sanitize(f.type)}${f.amount !== null && f.amount !== undefined ? `  ${f.amount} ${assetSymbol(sanitize(f.asset))}` : ""}${usd ? ` ${dim(`≈ ${usd}`)}` : f.usd === null ? ` ${dim("(not priced)")}` : ""}${f.component_of ? ` ${dim(`(part of ${sanitize(f.component_of)})`)}` : ""}`
       ]);
     });
     rows.push([

@@ -21,6 +21,97 @@ export interface DroppedOffer {
 // against a real amount means UNKNOWN, not free. Only a fee whose amount is
 // itself zero is genuinely free. Getting this backwards understated live
 // debridge fees ~8.6x and handed "cheapest" to the least-known route.
+// Some providers list a fee as a SUBTOTAL and again as its components. Relay
+// reports `relayer Fee` alongside `relayerGas Fee` + `relayerService Fee`,
+// whose amounts sum to it exactly — so adding every line counts the relayer fee
+// twice. On a real funded swap (receipt os_ms2atn8ve4dcfece) that showed $0.07
+// against the $0.031 relay actually charged and the 0.031964 USDC the wallet
+// lost. Overstating is the safer direction, but it made our most competitive
+// route look twice as expensive as it is.
+//
+// Containment requires TWO independent signals, because either alone gives
+// false positives:
+//   - arithmetic: the components sum to the parent exactly (same asset, non-zero
+//     amounts, relative epsilon). Alone this is not enough — small fee lists
+//     coincidentally sum all the time (1 + 2 = 3 across three unrelated fees).
+//   - naming: each component's name extends the parent's ("relayer" ->
+//     "relayerGas", "relayerService"). Alone this is a guess about intent.
+// Requiring both keeps the rule provider-agnostic — a new provider adopting the
+// same shape is handled with no code change — while making coincidence
+// effectively impossible.
+//
+// Returns, for each component line, the name of the parent line that contains
+// it. Callers keep every line visible and exclude only the components from the
+// total.
+const MAX_COMPONENT_GROUP = 4; // relay uses 2; bounded so this stays O(n^4) on a <=6 item list
+
+function feeAmountNumber(f: WireFee): number | null {
+  const a = f.amount;
+  if (a === null || a === undefined) return null;
+  const n = typeof a === "number" ? a : Number(a);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// "relayer Fee" -> "relayer". Returns null for names too short to be a
+// meaningful prefix, so a generic "Fee" can never parent anything.
+function feeNameStem(type: string): string | null {
+  const stem = type.trim().replace(/\s*fees?$/i, "").trim();
+  return stem.length >= 3 ? stem.toLowerCase() : null;
+}
+
+// "relayerGas Fee" extends the stem "relayer"; "Outbound Fee" does not extend
+// "network". The component must be strictly longer — a line cannot contain
+// itself, and two identically-named lines are not a hierarchy.
+function extendsStem(type: string, stem: string): boolean {
+  const s = feeNameStem(type);
+  return s !== null && s !== stem && s.startsWith(stem);
+}
+
+function componentParents(fees: WireFee[]): Map<number, string> {
+  const found = new Map<number, string>();
+  const candidates = fees
+    .map((f, i) => ({ i, amount: feeAmountNumber(f), asset: f.asset, type: f.type }))
+    .filter((x): x is { i: number; amount: number; asset: string; type: string } => x.amount !== null);
+
+  for (const parent of candidates) {
+    const stem = feeNameStem(parent.type);
+    if (!stem) continue;
+    const others = candidates.filter(
+      (c) => c.i !== parent.i && c.asset === parent.asset && extendsStem(c.type, stem)
+    );
+    if (others.length < 2) continue;
+    const eps = Math.abs(parent.amount) * 1e-9;
+    // smallest group first: prefer the tightest explanation of the subtotal
+    for (let size = 2; size <= Math.min(MAX_COMPONENT_GROUP, others.length); size++) {
+      const combo = findSubsetSummingTo(others, parent.amount, size, eps);
+      if (!combo) continue;
+      // a line already claimed as a component cannot also be a parent
+      if (combo.some((c) => found.has(c.i)) || found.has(parent.i)) break;
+      for (const c of combo) found.set(c.i, parent.type);
+      break;
+    }
+  }
+  return found;
+}
+
+function findSubsetSummingTo<T extends { amount: number }>(
+  items: T[],
+  target: number,
+  size: number,
+  eps: number,
+  start = 0,
+  acc: T[] = []
+): T[] | null {
+  if (acc.length === size) return Math.abs(acc.reduce((s, x) => s + x.amount, 0) - target) <= eps ? [...acc] : null;
+  for (let i = start; i < items.length; i++) {
+    acc.push(items[i]!);
+    const hit = findSubsetSummingTo(items, target, size, eps, i + 1, acc);
+    acc.pop();
+    if (hit) return hit;
+  }
+  return null;
+}
+
 function pricedFeeUsd(f: WireFee): number | null {
   if (typeof f.usd !== "number" || !Number.isFinite(f.usd)) return null;
   if (f.usd !== 0) return f.usd;
@@ -76,9 +167,17 @@ function normalizeOffers(
     // Normalize the fee list once, here, so nothing downstream — totals, the
     // cheapest badge, the JSON envelope — can read an unpriced fee as free.
     // `raw` below still carries the untouched wire response.
-    const fees: WireFee[] = (Array.isArray(d.fees) ? d.fees : []).map((f) => ({ ...f, usd: pricedFeeUsd(f) }));
+    const rawFees: WireFee[] = (Array.isArray(d.fees) ? d.fees : []).map((f) => ({ ...f, usd: pricedFeeUsd(f) }));
+    // Every line stays visible; components carry the parent that already counts
+    // them so nothing is hidden and the arithmetic is explainable.
+    const parents = componentParents(rawFees);
+    const fees: WireFee[] = rawFees.map((f, i) =>
+      parents.has(i) ? { ...f, component_of: parents.get(i)! } : f
+    );
     const feesComplete = fees.length > 0 && fees.every((f) => f.usd !== null);
-    const feesTotalUsd = feesComplete ? fees.reduce<number>((acc, f) => acc + (f.usd ?? 0), 0) : null;
+    const feesTotalUsd = feesComplete
+      ? fees.reduce<number>((acc, f, i) => acc + (parents.has(i) ? 0 : f.usd ?? 0), 0)
+      : null;
 
     const recSlip = d.recommended_slippage;
     let recommendedSlippageBps: number | null = null;
@@ -410,7 +509,15 @@ export function quoteSetToJson(set: QuoteSet): Record<string, unknown> {
         decimals: o.outDecimals,
         usd_estimate: o.expectedOutUsd
       },
-      fees: o.fees.map((f) => ({ type: f.type, asset: f.asset, amount: f.amount, usd: f.usd })),
+      // component_of must survive into the envelope: without it the fee lines
+      // do not sum to fees_total_usd and an agent has no way to see why.
+      fees: o.fees.map((f) => ({
+        type: f.type,
+        asset: f.asset,
+        amount: f.amount,
+        usd: f.usd,
+        ...(f.component_of ? { component_of: f.component_of } : {})
+      })),
       fees_total_usd: o.feesTotalUsd,
       fees_complete: o.feesComplete,
       eta_seconds: o.etaSeconds,

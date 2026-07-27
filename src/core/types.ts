@@ -16,6 +16,11 @@ export interface WireFee {
   asset: string;
   amount: number | string | null;
   usd: number | null;
+  // Set locally (never by the wire) when this line is a component of another
+  // fee that already covers it — e.g. relay's `relayerGas`/`relayerService`
+  // inside `relayer Fee`. Such lines stay visible but are excluded from the
+  // total, so the list stays complete without being double-counted.
+  component_of?: string;
 }
 
 // data payload inside each quote offer. expected_amount_out arrives as a JSON

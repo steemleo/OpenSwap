@@ -4,7 +4,7 @@
   "description": "OpenSwap CLI by LeoDex — open-source crosschain swaps, right from your terminal. 30+ chains, for humans, AI agents, and bots. Powered by LeoKit.",
   "type": "module",
   "license": "MIT",
-  "author": "LeoFinance <contact@leofinance.io>",
+  "author": "LeoDex <contact@leofinance.io>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/steemleo/openswap.git"
