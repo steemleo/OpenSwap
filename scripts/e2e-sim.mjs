@@ -56,7 +56,10 @@ if (!dep.ok) fail("deposit-lane swap not ok", dep);
 if (dep.meta.environment !== "simulated") fail("environment must be simulated", dep.meta);
 if (!dep.data.receipt_id?.startsWith("ost_")) fail("simulated receipt must be ost_", dep.data);
 if (!/^0x7e57/.test(dep.data.payment_request?.deposit_address ?? "")) fail("deposit address must be the 7e57 test pattern", dep.data);
-await waitForState(dep.data.receipt_id, "success");
+const happy = await waitForState(dep.data.receipt_id, "success");
+if ((happy.data.implausible ?? []).length > 0) {
+  fail("a corroborated success must NOT be flagged unverified", happy.data);
+}
 console.log(`deposit lane ok  ${dep.data.receipt_id}`);
 
 // ── deposit lane: magic-amount failure story ────────────────────────────
@@ -72,6 +75,22 @@ await (async () => {
   fail("magic .13 swap never failed");
 })();
 console.log(`magic .13 ok     ${bad.data.receipt_id}`);
+
+// ── deposit lane: phantom success (an unverifiable terminal claim) ──────
+// The simulator answers the FIRST status poll with terminal success — unpaid,
+// no dest hash, out_amount that is not this swap's outcome. The CLI must
+// surface that as an unverified claim, never as a clean green result.
+const phantom = cli("swap", "--from", "eth:usdc", "--to", "base:usdc", "--amount", "25.62",
+  "--to-address", TO, "--refund-address", REFUND, "--yes", "--json");
+if (!phantom.ok) fail("phantom swap creation not ok", phantom);
+const ps = cli("status", phantom.data.receipt_id, "--json");
+if (ps.data?.state === "success") fail("CLI endorsed an unverifiable success as success", ps.data);
+if (ps.data?.claimed_state !== "success") fail("the backend's claim must stay visible as claimed_state", ps.data);
+if (!Array.isArray(ps.data?.implausible) || ps.data.implausible.length === 0) {
+  fail("terminal success with no dest hash and an implausible amount must carry implausible reasons", ps.data);
+}
+if (!(ps.warnings ?? []).length) fail("envelope warnings missing for unverified success", ps);
+console.log(`phantom .62 ok   ${phantom.data.receipt_id}`);
 
 // ── signer lane: real signing against the sim chain ─────────────────────
 const signed = cli("swap", "--from", "eth:usdc", "--to", "base:usdc", "--amount", "30",

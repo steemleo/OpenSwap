@@ -283,7 +283,9 @@ function statusFor(quoteId: string): Response {
     status: s.state,
     protocol: dep.protocol,
     in_amount: dep.amount_display,
-    out_amount: s.state === "success" ? fromBaseUnits(dep.out_base_units, dep.out_decimals) : null,
+    // A scenario may force its own out_amount (the phantom story returns raw
+    // base-unit garbage a faulty status source might) — otherwise derive it.
+    out_amount: s.out_amount ?? (s.state === "success" ? fromBaseUnits(dep.out_base_units, dep.out_decimals) : null),
     dest_tx_hash: s.dest_tx_hash,
     refund_tx_hash: s.refund_tx_hash,
     error: s.error,

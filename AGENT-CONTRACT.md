@@ -68,7 +68,9 @@ same exit codes, `meta.environment: "simulated"`, receipts prefixed `ost_`.
 Deposits auto-pay in seconds; `OPENSWAP_TEST_TIMESCALE=100` compresses a full
 paid-to-success story to under a second; magic amounts steer outcomes
 deterministically (`.13` → failed, `.19` → refunded, `.07` → short deposit
-window). Use it to verify a full swap end to end before touching real funds:
+window, `.62` → the backend claims an unverifiable success and status
+reports it as `pending` with `claimed_state`/`implausible` set). Use it to
+verify a full swap end to end before touching real funds:
 
 ```bash
 OPENSWAP_TEST_MODE=1 OPENSWAP_TEST_TIMESCALE=100 openswap swap \
@@ -95,6 +97,10 @@ openswap swap --json --yes -a 100 -f arb:USDC -t btc:BTC \
 # Track (terminal states: success | failed | refunded | deposit_expired)
 # deposit_expired = the payment window closed unpaid. It is terminal and
 # sticky, so stop polling; if the user paid late, `status --watch` picks it up.
+# A backend-reported terminal that fails the CLI's corroboration checks is
+# NOT emitted as terminal: data.state stays "pending" with the claim under
+# data.claimed_state and reasons under data.implausible (stable codes) plus
+# envelope warnings. Keep polling or escalate — never report it as success.
 openswap status <receipt_id> --json
 
 # Live prices for strategies

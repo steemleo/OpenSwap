@@ -3,7 +3,8 @@ import * as p from "@clack/prompts";
 import { buildApi } from "../cli-context.js";
 import { latestOpenReceipt, listReceipts, readReceipt, updateReceipt } from "../core/receipts.js";
 import { isTestMode } from "../core/paths.js";
-import { normalizeStatus, pollStatus } from "../core/status.js";
+import { normalizeStatus, pollStatus, statusImplausibilities } from "../core/status.js";
+import type { NormalizedStatus } from "../core/types.js";
 import { CliError } from "../core/errors.js";
 import { emitData, failWith, resolveOutput } from "../render/output.js";
 import { header, keyValueRows } from "../render/components.js";
@@ -49,11 +50,30 @@ export function resolveReceipt(idArg: string | undefined): { receipt: ReceiptV1 
   throw new CliError("USAGE", `"${id}" is not a receipt (os_…) or quote ID.`);
 }
 
+// An unverified terminal claim must not stop machine consumers: the contract
+// tells agents to stop polling on terminal states, so a success that fails
+// corroboration is reported as the honest non-terminal "pending", with the
+// backend's claim kept visible under claimed_state and the reasons alongside.
+export function unverifiedSuccess(status: NormalizedStatus): boolean {
+  return status.state === "success" && (status.implausible?.length ?? 0) > 0;
+}
+
+export function persistedState(status: NormalizedStatus): ReceiptV1["last_state"] {
+  return unverifiedSuccess(status) ? "unknown" : status.state;
+}
+
+export function statusWarnings(status: NormalizedStatus): string[] {
+  return (status.implausible ?? []).map((i) => `Unverified ${status.state}: ${i.message}`);
+}
+
 export function statusToJson(receipt: ReceiptV1 | null, status: ReturnType<typeof normalizeStatus>): Record<string, unknown> {
+  const unverified = unverifiedSuccess(status);
   return {
     receipt_id: receipt?.receipt_id ?? null,
     quote_id: receipt?.quote_id ?? null,
-    state: status.state,
+    state: unverified ? "pending" : status.state,
+    ...(unverified ? { claimed_state: status.state } : {}),
+    ...(status.implausible && status.implausible.length > 0 ? { implausible: status.implausible } : {}),
     protocol: status.protocol ?? receipt?.protocol ?? null,
     in_amount: status.inAmount,
     out_amount: status.outAmount,
@@ -96,8 +116,13 @@ export default defineCommand({
         }
       }
 
+      const expectation = {
+        expectedOutDisplay: receipt?.expected_out_display ?? null,
+        createdAt: receipt ? Date.parse(receipt.created_at) || null : null
+      };
       const raw = await api.getStatus({ quote_id: quoteId });
       let status = normalizeStatus(raw);
+      status.implausible = statusImplausibilities(status, expectation);
 
       // Deposit not yet paid: the backend reports "pending" both before and
       // after payment. If the receipt still says awaiting_payment and the
@@ -169,7 +194,7 @@ export default defineCommand({
         // more precise awaiting_payment state on the receipt
         const keepAwaiting = receipt.last_state === "awaiting_payment" && status.state === "pending";
         updateReceipt(receipt.receipt_id, {
-          ...(keepAwaiting ? {} : { last_state: status.state }),
+          ...(keepAwaiting ? {} : { last_state: persistedState(status) }),
           last_checked_at: new Date().toISOString(),
           last_error: status.error
         });
@@ -177,10 +202,10 @@ export default defineCommand({
 
       if (!args.watch || ["success", "failed", "refunded"].includes(status.state)) {
         if (ctx.mode === "json") {
-          emitData(ctx, statusToJson(receipt, status), { apiUrl });
+          emitData(ctx, statusToJson(receipt, status), { apiUrl, warnings: statusWarnings(status) });
           return;
         }
-        process.stdout.write(renderSwapTimeline(stateSteps(status.state)) + "\n\n");
+        process.stdout.write(renderSwapTimeline(stateSteps(status.state, { unverified: unverifiedSuccess(status) })) + "\n\n");
         process.stdout.write(finalStateBlock(status, receipt?.receipt_id ?? quoteId, receipt ? assetSymbol(receipt.to_asset) : "", receipt?.refund_address) + "\n");
         if (ctx.mode === "human") {
           const { maybeAskPulse } = await import("./shared.js");
@@ -206,20 +231,21 @@ export default defineCommand({
         quoteId,
         signal: abort.signal,
         timeoutMs: null,
+        expectation,
         onUpdate: (s) => {
           status = s;
           if (receipt) {
             updateReceipt(receipt.receipt_id, {
-              last_state: s.state,
+              last_state: persistedState(s),
               last_checked_at: new Date().toISOString(),
               last_error: s.error
             });
           }
           if (ctx.mode === "json") {
-            process.stderr.write(JSON.stringify({ state: s.state }) + "\n");
+            process.stderr.write(JSON.stringify({ state: persistedState(s) }) + "\n");
             return;
           }
-          const block = renderSwapTimeline(stateSteps(s.state));
+          const block = renderSwapTimeline(stateSteps(s.state, { unverified: unverifiedSuccess(s) }));
           if (process.stdout.isTTY && timelineHeight > 0) {
             process.stdout.write(`\x1b[${timelineHeight}A\x1b[0J`);
           }
@@ -229,7 +255,7 @@ export default defineCommand({
       });
       process.removeListener("SIGINT", onSigint);
       if (ctx.mode === "json") {
-        emitData(ctx, statusToJson(receipt, final), { apiUrl });
+        emitData(ctx, statusToJson(receipt, final), { apiUrl, warnings: statusWarnings(final) });
         return;
       }
       process.stdout.write(finalStateBlock(final, receiptId, receipt ? assetSymbol(receipt.to_asset) : "", receipt?.refund_address) + "\n");

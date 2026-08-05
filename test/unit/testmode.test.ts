@@ -175,3 +175,22 @@ describe("world state machine", () => {
     expect(loadWorld().scenario).toBe("refund");
   });
 });
+
+// The phantom scenario plays a hostile status source: terminal success on the
+// FIRST poll, unpaid, no hash, raw base-unit out_amount. It exists so the e2e
+// gate can prove the CLI refuses to endorse an uncorroborated claim.
+describe("phantom scenario wire shape", () => {
+  it("reports instant success with no corroboration, before any payment", () => {
+    const d: SimDeposit = {
+      quote_id: "q", receipt_hint: null, protocol: "rango",
+      from_asset: "BTC.BTC", to_asset: "ETH.USDC", amount_display: "1.62",
+      deposit_address: "x", network: "BTC", to_address: "0x1", from_address: null,
+      created_at: Date.now(), expires_at: Date.now() + 60_000, paid_at: null,
+      outcome: "phantom", out_base_units: "55123420000", out_decimals: 6
+    };
+    const s = depositStatus(d, Date.now() + 1);
+    expect(s.state).toBe("success");
+    expect(s.dest_tx_hash).toBeNull();
+    expect(s.out_amount).toBe("123456789012345678");
+  });
+});

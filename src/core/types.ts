@@ -123,6 +123,17 @@ export type SwapState =
 
 export const TERMINAL_STATES: ReadonlySet<SwapState> = new Set(["success", "failed", "refunded"]);
 
+// Why a reported status cannot be taken at face value. Codes are stable —
+// machine consumers may branch on them.
+export interface StatusImplausibility {
+  code:
+    | "SUCCESS_WITHOUT_DEST_TX"
+    | "OUT_AMOUNT_LOOKS_LIKE_BASE_UNITS"
+    | "OUT_AMOUNT_FAR_FROM_QUOTE"
+    | "SUCCESS_TOO_SOON";
+  message: string;
+}
+
 export interface NormalizedStatus {
   state: SwapState;
   protocol: string | null;
@@ -135,6 +146,9 @@ export interface NormalizedStatus {
   error: string | null;
   scannerUrl: string | null;
   nativeScannerUrl: string | null;
+  // Present when the wire state fails corroboration (see statusImplausibilities).
+  // Optional so plain normalizeStatus construction sites stay valid.
+  implausible?: StatusImplausibility[];
   raw: Record<string, unknown>;
 }
 

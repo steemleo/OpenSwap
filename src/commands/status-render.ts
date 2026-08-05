@@ -5,7 +5,14 @@ import { sanitize } from "../render/money.js";
 
 const ORDER = ["pending", "confirming", "swapping", "sending", "success"] as const;
 
-export function stateSteps(state: SwapState): Array<{ label: string; state: TimelineState }> {
+export function stateSteps(
+  state: SwapState,
+  opts: { unverified?: boolean } = {}
+): Array<{ label: string; state: TimelineState }> {
+  // An unverified "success" proves nothing about the intermediate steps —
+  // inferring them from a final state we do not trust would paint progress
+  // that may never have happened. Show only what is actually known.
+  if (opts.unverified && state === "success") return stateSteps("pending");
   const labels: Record<(typeof ORDER)[number], string> = {
     // "pending" is what the backend reports BOTH before and after payment, and
     // it is also the value the watch view is seeded with the moment a deposit
@@ -46,6 +53,21 @@ export function finalStateBlock(
   const lines: string[] = [];
   switch (status.state) {
     case "success": {
+      if (status.implausible && status.implausible.length > 0) {
+        // The reported state failed corroboration. State the claim, say why
+        // it cannot be trusted, and never present the amount as money
+        // received — an unverified figure rendered green reads as fact.
+        lines.push(`${warn(glyph("caution"))} ${bold("The backend reports this swap complete — the CLI could not verify that.")}`);
+        for (const i of status.implausible) lines.push(dim(`  ${glyph("middot")} ${sanitize(i.message)}`));
+        if (status.outAmount) lines.push(dim(`Claimed received ${sanitize(status.outAmount)} ${sanitize(toSymbol)} — unverified`));
+        lines.push("");
+        lines.push(bold("Treat this swap as unconfirmed."));
+        lines.push(dim("Next:"));
+        lines.push(`  1. Keep watching  ${accent(`openswap status ${receiptId} --watch`)}`);
+        lines.push(`  2. Check the destination address on its own block explorer`);
+        lines.push(`  3. Tell the team  ${accent(`openswap feedback -m "swap ${receiptId} unverified success"`)}`);
+        break;
+      }
       lines.push(`${ok(glyph("check"))} ${bold("Swap complete.")}`);
       if (status.outAmount) lines.push(`Received         ${bold(ok(`${sanitize(status.outAmount)} ${sanitize(toSymbol)}`))}`);
       if (status.destTxHash) lines.push(`Destination tx   ${sanitize(status.destTxHash)}`);

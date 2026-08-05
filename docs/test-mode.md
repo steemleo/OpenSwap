@@ -51,9 +51,10 @@ openswap test pay <receipt>       # simulate the user paying now
 | `.19` | swap refunds to sender |
 | `.07` | short 15s deposit window |
 | `.23` | slow confirmations |
+| `.62` | backend claims an instant, unverifiable success — the CLI reports it as unverified |
 
 Or set a default for every swap: `openswap test scenario refund` (one of
-`happy`, `refund`, `fail`, `expire`, `slow`).
+`happy`, `refund`, `fail`, `expire`, `slow`, `phantom`).
 
 ## The rest of the toolbox
 

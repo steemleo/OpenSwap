@@ -66,3 +66,43 @@ describe("finalStateBlock — a failed swap says where the money went", () => {
     expect(out).not.toMatch(/refunded/i);
   });
 });
+
+// A wrong or stale status row can claim instant "success" with no destination
+// hash and an amount that is not this swap's outcome. The render layer must
+// never dress an uncorroborated claim as a verified result.
+describe("unverified success", () => {
+  const flagged = status({
+    state: "success",
+    outAmount: "123456789012345678",
+    implausible: [
+      { code: "SUCCESS_WITHOUT_DEST_TX", message: "no destination transaction" },
+      { code: "OUT_AMOUNT_FAR_FROM_QUOTE", message: "amount is not this swap's outcome" }
+    ]
+  });
+
+  it("does not say Swap complete, and names every reason", () => {
+    const text = stripAnsi(finalStateBlock(flagged, "os_x", "USDC"));
+    expect(text).not.toContain("Swap complete.");
+    expect(text).toContain("could not verify");
+    expect(text).toContain("no destination transaction");
+    expect(text).toContain("unconfirmed");
+  });
+
+  it("presents the claimed amount as a claim, never as money received", () => {
+    const text = stripAnsi(finalStateBlock(flagged, "os_x", "USDC"));
+    expect(text).not.toMatch(/^Received/m);
+    expect(text).toContain("Claimed received");
+    expect(text).toContain("unverified");
+  });
+
+  it("paints no fabricated progress in the timeline", () => {
+    const steps = stateSteps("success", { unverified: true });
+    expect(steps.every((s) => s.state !== "done")).toBe(true);
+  });
+
+  it("leaves the corroborated success path byte-identical", () => {
+    const text = stripAnsi(finalStateBlock(status({ state: "success", outAmount: "55100.12", destTxHash: "0xabc", implausible: [] }), "os_x", "USDC"));
+    expect(text).toContain("Swap complete.");
+    expect(text).toContain("Received");
+  });
+});

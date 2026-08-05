@@ -156,7 +156,7 @@ const status = defineCommand({
       for (const [suffix, cfg] of Object.entries(MAGIC_AMOUNTS)) {
         process.stdout.write(`  amount ending ${accent(suffix)}  ${cfg.label}\n`);
       }
-      process.stdout.write(`\n${dim("Change the default:")} ${accent("openswap test scenario <happy|refund|fail|expire|slow>")}\n`);
+      process.stdout.write(`\n${dim("Change the default:")} ${accent("openswap test scenario <happy|refund|fail|expire|slow|phantom>")}\n`);
       if (open.length > 0) process.stdout.write(`${dim("Open simulated deposits:")} ${open.length} ${dim("· pay one:")} ${accent("openswap test pay <receipt>")}\n`);
     } catch (err) {
       failWith(ctx, err);
@@ -242,7 +242,7 @@ const fund = defineCommand({
 const scenario = defineCommand({
   meta: { name: "scenario", description: "Set the default outcome for simulated swaps" },
   args: {
-    name: { type: "positional", description: "happy | refund | fail | expire | slow", required: true },
+    name: { type: "positional", description: "happy | refund | fail | expire | slow | phantom", required: true },
     json: { type: "boolean" }, plain: { type: "boolean" }, "no-color": { type: "boolean" },
     "no-input": { type: "boolean" }
   },

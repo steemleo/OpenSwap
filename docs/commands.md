@@ -38,7 +38,8 @@ Test mode: the entire CLI runs against a simulated backend — simulated
 wallets, balances, deposits, and tracking — through the unchanged production
 code paths. `on`/`off` toggle it (env override `OPENSWAP_TEST_MODE=1|0`);
 `pay` simulates paying a deposit; magic amounts (`.13` fail, `.19` refund,
-`.07` short window, `.23` slow) steer outcomes; `OPENSWAP_TEST_TIMESCALE`
+`.07` short window, `.23` slow, `.62` unverifiable backend success) steer
+outcomes; `OPENSWAP_TEST_TIMESCALE`
 accelerates the story for CI/agents. Simulated receipts are `ost_` with
 `environment: "simulated"`. See [test-mode.md](test-mode.md).
 

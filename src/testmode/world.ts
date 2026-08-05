@@ -9,8 +9,8 @@ import { FIXTURE_ASSETS, type FixtureAsset } from "./fixtures.js";
 // function of (payment time, scenario, now), so separate CLI invocations
 // naturally observe a world that kept moving.
 
-export type Scenario = "happy" | "refund" | "fail" | "expire" | "slow";
-export const SCENARIOS: Scenario[] = ["happy", "refund", "fail", "expire", "slow"];
+export type Scenario = "happy" | "refund" | "fail" | "expire" | "slow" | "phantom";
+export const SCENARIOS: Scenario[] = ["happy", "refund", "fail", "expire", "slow", "phantom"];
 
 // Stripe-style magic amounts: the cents decide the story, so agents can
 // parametrize thousands of runs without touching config.
@@ -18,7 +18,8 @@ export const MAGIC_AMOUNTS: Record<string, { outcome: Scenario; label: string }>
   ".13": { outcome: "fail", label: "protocol failure after payment" },
   ".19": { outcome: "refund", label: "swap refunds to sender" },
   ".07": { outcome: "expire", label: "short 15s deposit window" },
-  ".23": { outcome: "slow", label: "slow confirmations" }
+  ".23": { outcome: "slow", label: "slow confirmations" },
+  ".62": { outcome: "phantom", label: "backend reports an unrelated completed swap instantly" }
 };
 
 export interface SimDeposit {
@@ -267,6 +268,14 @@ export function depositStatus(dep: SimDeposit, now = Date.now()): {
   out_amount: string | null;
   error: string | null;
 } {
+  // A hostile status source: terminal success on the very first poll —
+  // before any payment, with no destination hash, and an out_amount that is
+  // not this swap's outcome (raw base-unit garbage). Every field is one a
+  // wrong or stale status row could really carry, and the CLI must never
+  // present the combination as a verified success.
+  if (dep.outcome === "phantom") {
+    return { state: "success", dest_tx_hash: null, refund_tx_hash: null, out_amount: "123456789012345678", error: null };
+  }
   const paidAt = effectivePaidAt(dep, now);
   const ts = timescale();
   if (paidAt === null) {
