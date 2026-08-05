@@ -2,6 +2,7 @@ import { defineCommand, runCommand } from "citty";
 import * as p from "@clack/prompts";
 import { buildApi } from "../cli-context.js";
 import { quoteSetToJson, recommendationReason, streamQuoteSet } from "../core/quotes.js";
+import { enrichNoRoute } from "../core/alternatives.js";
 import { formatAmountForDisplay } from "../core/amount.js";
 import { resolveOutput, emitData, failWith } from "../render/output.js";
 import { header, routeCard, hr } from "../render/components.js";
@@ -80,8 +81,12 @@ export default defineCommand({
         p.intro(header("routes"));
       }
       const tokens = await loadAssetsWithSpinner(ctx, api, { forceRefresh: args.refresh === true });
-      const fromToken = await resolveAssetOrPrompt(ctx, tokens, args.from, "What do you want to send?");
-      const toToken = await resolveAssetOrPrompt(ctx, tokens, args.to, "What do you want to receive?");
+      const fromToken = await resolveAssetOrPrompt(ctx, tokens, args.from, "What do you want to send?", {
+        side: "from", amount: args.amount, other: args.to
+      });
+      const toToken = await resolveAssetOrPrompt(ctx, tokens, args.to, "What do you want to receive?", {
+        side: "to", amount: args.amount, other: fromToken.identifier
+      });
       const amount = await amountOrPrompt(ctx, args.amount, fromToken);
 
       const slippage = args["slippage-bps"] ? Number(args["slippage-bps"]) : undefined;
@@ -96,13 +101,27 @@ export default defineCommand({
           { from_asset: fromToken.identifier, to_asset: toToken.identifier, amount, slippage_bps: slippage },
           {
             depositOnly: args.deposit === true,
-            onOffer: (o, n) => spin?.message(`Streaming routes — ${n} found (${sanitize(o.protocol)} just arrived)`)
+            onOffer: (o, n) => spin?.message(`Streaming routes — ${n} found (${sanitize(o.protocol)} just arrived)`),
+            onRetry: () => spin?.message("Connection hiccup — retrying")
           }
         );
         spin?.stop(`${set.offers.length} route${set.offers.length === 1 ? "" : "s"} found`);
       } catch (err) {
-        spin?.stop("No routes", 1);
-        throw err;
+        // "No routes" on a connection failure blames the pair for a network
+        // problem and sends the user hunting for a different asset.
+        const noRoute = err instanceof Error && "code" in err && err.code === "NO_ROUTE";
+        spin?.stop(noRoute ? "No routes" : "Could not fetch routes", 1);
+        throw await enrichNoRoute(err, {
+          api,
+          tokens,
+          from: fromToken,
+          to: toToken,
+          amount,
+          command: "quote",
+          depositOnly: args.deposit === true,
+          onStart: () => spin?.start("Looking for a pair that does route"),
+          onDone: (n) => spin?.stop(n > 0 ? `${n} alternative${n === 1 ? "" : "s"} found` : "No alternative found", n > 0 ? 0 : 1)
+        });
       }
 
       if (ctx.mode === "json") {

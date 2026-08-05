@@ -200,7 +200,11 @@ export function resolveAsset(tokens: AssetToken[], input: string): ResolvedAsset
   const matches = tokens.filter((t) => t.symbol.toUpperCase() === symbol);
   if (matches.length === 0) {
     throw new CliError("NO_ROUTE", `No supported asset matches "${input}".`, {
-      actions: [{ label: "Search supported assets", command: `openswap assets search ${raw}` }]
+      actions: [{ label: "Search supported assets", command: `openswap assets search ${raw}` }],
+      // symbol_query: what the user meant as the COIN, with any chain part
+      // stripped — so interactive recovery can search for the right thing
+      // instead of the whole phrase.
+      details: { symbol_query: raw }
     });
   }
   if (matches.length === 1) return { token: matches[0]!, exact: false };
@@ -214,9 +218,32 @@ function resolveChainSymbol(tokens: AssetToken[], chainInput: string, symbolInpu
     (t) => t.blockchain.toUpperCase() === chain && t.symbol.toUpperCase() === symbol
   );
   if (matches.length === 0) {
-    throw new CliError("NO_ROUTE", `No supported asset "${symbol}" on ${chain}.`, {
-      actions: [{ label: "Search supported assets", command: `openswap assets search ${symbolInput}` }]
-    });
+    // The coin usually exists, just not on the chain the user guessed. The
+    // answer is already in the local token list, so name the chains that do
+    // carry it rather than sending them off to search for it.
+    // One row per chain — the same symbol often has several contracts on one
+    // chain, and "Use DOT on ETH" twice gives the user nothing to choose by.
+    const byChain = new Map<string, AssetToken>();
+    for (const t of rankCandidates(tokens.filter((t) => t.symbol.toUpperCase() === symbol))) {
+      if (!byChain.has(t.blockchain)) byChain.set(t.blockchain, t);
+    }
+    const elsewhere = [...byChain.values()].slice(0, 4);
+    throw new CliError(
+      "NO_ROUTE",
+      elsewhere.length > 0
+        ? `No supported asset "${symbol}" on ${chain} — it is available on ${elsewhere.map((t) => t.blockchain).join(", ")}.`
+        : `No supported asset "${symbol}" on ${chain}.`,
+      {
+        actions: [
+          ...elsewhere.map((t) => ({ label: `Use ${t.symbol} on ${t.blockchain}`, command: t.identifier })),
+          { label: "Search supported assets", command: `openswap assets search ${symbolInput}` }
+        ],
+        details: {
+          symbol_query: symbolInput,
+          ...(elsewhere.length > 0 ? { available_elsewhere: elsewhere.map((t) => t.identifier) } : {})
+        }
+      }
+    );
   }
   if (matches.length === 1) return { token: matches[0]!, exact: false };
   // the chain's native asset wins over wrapped/token variants of the same symbol
@@ -266,6 +293,21 @@ export function searchAssets(tokens: AssetToken[], query: string, limit = 25): A
     if (t.price_usd) score += 5;
     scored.push({ t, score });
   }
+  // A one-letter typo ("USCD") produces zero hits, which reads as
+  // "unsupported" when the coin is one keystroke away. Only when nothing
+  // matched at all, admit close misspellings of a SYMBOL — never of the long
+  // identifier, where near-misses are all noise.
+  if (scored.length === 0 && q.length >= 3) {
+    const maxDist = q.length >= 5 ? 2 : 1;
+    for (const t of tokens) {
+      const d = editDistanceAtMost(t.symbol.toLowerCase(), q, maxDist);
+      if (d === null) continue;
+      let score = 30 - d * 10;
+      if (t.is_popular) score += 15;
+      if (t.price_usd) score += 5;
+      scored.push({ t, score });
+    }
+  }
   scored.sort(
     (a, b) =>
       b.score - a.score ||
@@ -273,6 +315,34 @@ export function searchAssets(tokens: AssetToken[], query: string, limit = 25): A
       a.t.identifier.localeCompare(b.t.identifier)
   );
   return scored.slice(0, limit).map((s) => s.t);
+}
+
+// Edit distance with adjacent transposition as ONE edit ("USCD" -> "USDC"),
+// because swapped letters are the most common real typo. Returns null once the
+// distance is provably above `max`, so the full-token sweep in searchAssets
+// stays cheap (symbols are a few chars).
+function editDistanceAtMost(a: string, b: string, max: number): number | null {
+  if (Math.abs(a.length - b.length) > max) return null;
+  let prev2: number[] = [];
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let v = Math.min(prev[j]! + 1, row[j - 1]! + 1, prev[j - 1]! + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        v = Math.min(v, prev2[j - 2]! + 1);
+      }
+      row.push(v);
+      if (v < best) best = v;
+    }
+    if (best > max) return null;
+    prev2 = prev;
+    prev = row;
+  }
+  const d = prev[b.length]!;
+  return d <= max ? d : null;
 }
 
 // The backend's is_popular flag includes junk tokens whose punctuation/emoji

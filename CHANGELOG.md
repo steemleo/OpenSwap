@@ -7,6 +7,56 @@ minor versions may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- **A swap status the CLI cannot corroborate is no longer presented as a
+  completed swap.** This CLI moves other people's money, so a reported
+  "success" is now validated against the swap's own receipt before it is
+  endorsed: is a destination transaction named, is the amount within range
+  of the quote, has enough time passed for a crosschain swap to settle. A
+  claim that fails those checks is reported as exactly that — a claim: the
+  timeline paints no unproven progress, the human output says "the CLI
+  could not verify that" with each reason, machine output keeps
+  `state: "pending"` with the claim under `claimed_state` and stable reason
+  codes under `implausible` plus envelope warnings, the receipt stays open
+  and resumable, and the watch keeps polling awhile instead of stopping on
+  the first uncorroborated answer. Test mode gained magic amount `.62` — a
+  status source that claims instant, unverifiable success — so the e2e gate
+  proves the CLI refuses to endorse it.
+
+### Added
+- **"No route" now suggests a pair that does route.** A user asking to receive
+  Zcash was told the pair was unsupported and stopped there — while the same
+  coin quoted fine on Solana and BNB Chain, which nothing in the output
+  revealed. `quote` and `swap` now answer a dead end with alternatives, for
+  every pair rather than a curated list. Two distinct dead ends are covered: a
+  pair no provider quotes, and an asset named on a chain that does not carry it
+  (`DOT.DOT` → "available on ETH, BSC"). Suggestions vary one side at a time so
+  they stay close to what was asked, keeping the user's own coin wherever
+  possible, and are offered only after being proven to quote — a suggestion
+  that also failed would be worse than none. Each carries a runnable command,
+  and machine consumers get the same list under `error.details.alternatives`.
+  Where genuinely nothing routes the CLI still says so rather than inventing a
+  near-miss. The search is bounded and runs in parallel, so a failing quote is
+  no slower than before.
+- **Asset dead ends recover instead of exiting.** A `--from`/`--to` naming a
+  chain that does not carry the coin used to print an error and quit, even in a
+  terminal where the CLI already knew the answer. Interactive sessions now turn
+  that into a picker of the chains that do carry it; machine modes get the same
+  suggestions rewritten as complete, runnable commands (the user's own
+  invocation with the failed side swapped) instead of bare identifiers.
+- **A connection blip no longer reads as "no routes".** The streaming quote
+  path failed hard on a single transient network error, reporting a dead end
+  for a pair that quotes fine a second later — while the one-shot request path
+  already retried. The stream now silently retries once, but only before
+  anything has arrived (a second round mid-stream would swap the quote_id),
+  and the spinner says "Could not fetch routes" instead of "No routes" when
+  the failure was the connection, not the pair.
+- **Typos find the coin anyway.** `USCD` returned zero results everywhere.
+  Asset search now falls back to close misspellings of a symbol — swapped
+  letters count as one edit — but only when nothing real matched, so exact and
+  prefix matches keep their behaviour, and only against symbols, never long
+  contract identifiers where near-misses are noise.
+
 ## [0.1.1] - 2026-07-27
 
 ### Fixed

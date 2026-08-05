@@ -24,40 +24,111 @@ export function assetLabel(t: AssetToken): string {
   return `${sanitize(t.symbol)} on ${sanitize(t.blockchain)}${price}`;
 }
 
+// Enough context to turn a "use this asset instead" suggestion into a command
+// the user can actually run: which side failed, and whatever we know about the
+// rest of the invocation.
+export interface AssetSideContext {
+  side: "from" | "to";
+  amount?: string;
+  other?: string;
+}
+
+// The wrong-chain error's actions carry bare identifiers — meaningful to a
+// human mid-prompt, but machine consumers and error blocks need something
+// runnable. Rebuild each suggestion as the user's own command with the failed
+// side swapped. Anything unknown is simply omitted; a partial command prompts
+// for the rest.
+function withRunnableSuggestions(err: unknown, ctx: OutputContext, side?: AssetSideContext): unknown {
+  if (!side || !(err instanceof CliError) || err.code !== "NO_ROUTE") return err;
+  if (ctx.command !== "quote" && ctx.command !== "swap") return err;
+  const ids = Array.isArray(err.details?.available_elsewhere) ? (err.details!.available_elsewhere as string[]) : [];
+  if (ids.length === 0) return err;
+  const idSet = new Set(ids);
+  const amount = side.amount ? ` -a ${side.amount}` : "";
+  const actions = err.actions.map((a) => {
+    if (!a.command || !idSet.has(a.command)) return a;
+    const f = side.side === "from" ? a.command : side.other;
+    const t = side.side === "to" ? a.command : side.other;
+    return { ...a, command: `openswap ${ctx.command}${amount}${f ? ` -f ${f}` : ""}${t ? ` -t ${t}` : ""}` };
+  });
+  return new CliError(err.code, err.message, { retryable: err.retryable, actions, details: err.details });
+}
+
+// One recovery path for every interactive dead end. Prefer the error's own
+// answer (the chains that DO carry the coin) over a text search, which cannot
+// know the user's intent as precisely. Returns null when the user wants to
+// type something else — the caller loops back to the prompt.
+async function pickFromNoRoute(tokens: AssetToken[], typed: string, err: CliError): Promise<AssetToken | null> {
+  const ids = Array.isArray(err.details?.available_elsewhere) ? (err.details!.available_elsewhere as string[]) : [];
+  const elsewhere = ids
+    .map((id) => tokens.find((t) => t.identifier === id))
+    .filter((t): t is AssetToken => t !== undefined);
+  const query = typeof err.details?.symbol_query === "string" ? err.details.symbol_query : typed;
+  const options = elsewhere.length > 0 ? elsewhere : searchAssets(tokens, query, 8);
+  if (options.length === 0) {
+    p.log.warn(`No supported asset matches "${sanitize(typed)}". Try another symbol.`);
+    return null;
+  }
+  const chosen = guardCancel(
+    await p.select({
+      message: elsewhere.length > 0 ? sanitize(err.message) : `No exact match for "${sanitize(typed)}". Close matches:`,
+      options: [
+        ...options.map((c) => ({ value: c.identifier, label: assetLabel(c) })),
+        { value: "__again", label: "Type something else" }
+      ]
+    })
+  );
+  if (chosen === "__again") return null;
+  return options.find((c) => c.identifier === chosen) ?? null;
+}
+
 export async function resolveAssetOrPrompt(
   ctx: OutputContext,
   tokens: AssetToken[],
   input: string | undefined,
-  promptLabel: string
+  promptLabel: string,
+  side?: AssetSideContext
 ): Promise<AssetToken> {
   if (input) {
-    const res = resolveAsset(tokens, input);
-    if ("token" in res) return res.token;
-    if (ctx.noInput) {
-      throw new CliError(
-        "VALIDATION",
-        `"${input}" matches several assets: ${res.candidates
-          .slice(0, 6)
-          .map((c) => c.identifier)
-          .join(", ")}. Use the full identifier (CHAIN.SYMBOL-ADDRESS) or chain:symbol.`
+    try {
+      const res = resolveAsset(tokens, input);
+      if ("token" in res) return res.token;
+      if (ctx.noInput) {
+        throw new CliError(
+          "VALIDATION",
+          `"${input}" matches several assets: ${res.candidates
+            .slice(0, 6)
+            .map((c) => c.identifier)
+            .join(", ")}. Use the full identifier (CHAIN.SYMBOL-ADDRESS) or chain:symbol.`
+        );
+      }
+      const chosen = guardCancel(
+        await p.select({
+          message: `"${sanitize(input)}" exists on several networks — which one?`,
+          options: res.candidates.slice(0, 10).map((c) => ({ value: c.identifier, label: assetLabel(c) }))
+        })
       );
+      const picked = res.candidates.find((c) => c.identifier === chosen);
+      if (!picked) throw new CliError("INTERNAL", "Selection did not match a candidate.");
+      return picked;
+    } catch (err) {
+      if (!(err instanceof CliError) || err.code !== "NO_ROUTE" || ctx.noInput) {
+        throw withRunnableSuggestions(err, ctx, side);
+      }
+      // A --from/--to that dead-ends is not a reason to die in a TTY: the
+      // error usually knows where the coin does exist, so offer that instead.
+      const picked = await pickFromNoRoute(tokens, input, err);
+      if (picked) {
+        p.log.step(`${assetSymbol(picked.identifier)} on ${assetChain(picked.identifier)}  ${dim(picked.identifier)}`);
+        return picked;
+      }
+      // the user asked to type something else — fall through to the prompt
     }
-    const chosen = guardCancel(
-      await p.select({
-        message: `"${sanitize(input)}" exists on several networks — which one?`,
-        options: res.candidates.slice(0, 10).map((c) => ({ value: c.identifier, label: assetLabel(c) }))
-      })
-    );
-    const picked = res.candidates.find((c) => c.identifier === chosen);
-    if (!picked) throw new CliError("INTERNAL", "Selection did not match a candidate.");
-    return picked;
-  }
-
-  if (ctx.noInput) {
+  } else if (ctx.noInput) {
     throw new CliError("USAGE", `Missing required asset. Pass --from and --to (e.g. --from arb:USDC --to btc:BTC).`);
   }
 
-  // free-text with live resolution; a search fallback keeps the user moving
+  // free-text with live resolution; a recovery select keeps the user moving
   while (true) {
     const typed = guardCancel(
       await p.text({
@@ -82,24 +153,8 @@ export async function resolveAssetOrPrompt(
       if (picked) return picked;
     } catch (err) {
       if (err instanceof CliError && err.code === "NO_ROUTE") {
-        const suggestions = searchAssets(tokens, typed, 8);
-        if (suggestions.length > 0) {
-          const chosen = guardCancel(
-            await p.select({
-              message: `No exact match for "${sanitize(typed)}". Close matches:`,
-              options: [
-                ...suggestions.map((c) => ({ value: c.identifier, label: assetLabel(c) })),
-                { value: "__again", label: "Type something else" }
-              ]
-            })
-          );
-          if (chosen !== "__again") {
-            const picked = suggestions.find((c) => c.identifier === chosen);
-            if (picked) return picked;
-          }
-          continue;
-        }
-        p.log.warn(`No supported asset matches "${sanitize(typed)}". Try another symbol.`);
+        const picked = await pickFromNoRoute(tokens, typed, err);
+        if (picked) return picked;
         continue;
       }
       throw err;

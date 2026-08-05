@@ -396,6 +396,7 @@ export interface StreamQuoteOptions {
   depositOnly?: boolean;
   timeoutMs?: number;
   onOffer?: (offer: RouteOffer, count: number) => void;
+  onRetry?: () => void;
 }
 
 export async function streamQuoteSet(
@@ -403,8 +404,6 @@ export async function streamQuoteSet(
   params: QuoteParams,
   opts: StreamQuoteOptions = {}
 ): Promise<QuoteSet> {
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), opts.timeoutMs ?? 25000);
   const byKey = new Map<string, RouteOffer>();
   const drops: DroppedOffer[] = [];
   let quoteId = "";
@@ -415,37 +414,54 @@ export async function streamQuoteSet(
     ...(opts.depositOnly ? { use_deposit_address: "true" } : {})
   } as QuoteParams & { use_deposit_address?: string };
 
-  try {
-    for await (const event of api.streamQuotes(streamParams, abort.signal)) {
-      const type = event.type;
-      if (type === "init") {
-        if (typeof event.quote_id === "string") quoteId = event.quote_id;
-        if (typeof event.timestamp === "string") timestamp = event.timestamp;
-        continue;
-      }
-      if (type !== "quote") continue;
-      const offer = normalizeWireOffer(event as { protocol?: unknown; data?: unknown }, drops);
-      if (!offer) continue;
-      const key = `${offer.protocol}|${offer.variant ?? ""}`;
-      const isNew = !byKey.has(key);
-      byKey.set(key, offer); // later events win (they may carry enriched data)
-      if (isNew) opts.onOffer?.(offer, byKey.size);
-    }
-  } catch (err) {
-    // an aborted stream is the timeout boundary, not a failure — keep what we have
-    if (!(abort.signal.aborted && byKey.size > 0)) {
-      if (byKey.size === 0) {
-        // the backend answers "no quotes for this pair" with a 404 — surface
-        // it as the friendly NO_ROUTE, exactly like the one-shot path
-        if (err instanceof CliError && err.code === "UPSTREAM" && err.details?.status === 404) {
-          throw noRouteError(params.from_asset, params.to_asset, drops);
+  // The one-shot request path retries transient failures; the SSE path did
+  // not, so a single connection blip surfaced as a hard "no routes" on a pair
+  // that quotes fine a second later. Reading quotes changes nothing, so one
+  // silent re-request is safe — but only when NOTHING has arrived yet: after
+  // the init event the round has a quote_id, and a second round would quietly
+  // replace it.
+  for (let attempt = 0; ; attempt++) {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), opts.timeoutMs ?? 25000);
+    let sawEvent = false;
+    try {
+      for await (const event of api.streamQuotes(streamParams, abort.signal)) {
+        sawEvent = true;
+        const type = event.type;
+        if (type === "init") {
+          if (typeof event.quote_id === "string") quoteId = event.quote_id;
+          if (typeof event.timestamp === "string") timestamp = event.timestamp;
+          continue;
         }
-        throw err;
+        if (type !== "quote") continue;
+        const offer = normalizeWireOffer(event as { protocol?: unknown; data?: unknown }, drops);
+        if (!offer) continue;
+        const key = `${offer.protocol}|${offer.variant ?? ""}`;
+        const isNew = !byKey.has(key);
+        byKey.set(key, offer); // later events win (they may carry enriched data)
+        if (isNew) opts.onOffer?.(offer, byKey.size);
       }
+    } catch (err) {
+      // an aborted stream is the timeout boundary, not a failure — keep what we have
+      if (!(abort.signal.aborted && byKey.size > 0)) {
+        if (byKey.size === 0) {
+          // the backend answers "no quotes for this pair" with a 404 — surface
+          // it as the friendly NO_ROUTE, exactly like the one-shot path
+          if (err instanceof CliError && err.code === "UPSTREAM" && err.details?.status === 404) {
+            throw noRouteError(params.from_asset, params.to_asset, drops);
+          }
+          if (err instanceof CliError && err.retryable && !sawEvent && attempt === 0) {
+            opts.onRetry?.();
+            continue; // the finally below cleans up this attempt's timer
+          }
+          throw err;
+        }
+      }
+    } finally {
+      clearTimeout(timer);
+      abort.abort();
     }
-  } finally {
-    clearTimeout(timer);
-    abort.abort();
+    break;
   }
 
   const collected = finalizeOffers([...byKey.values()]);

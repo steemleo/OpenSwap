@@ -25,7 +25,9 @@ import { accent, accentBold, bad, bold, dim, glyph, ok, termCaps, warn } from ".
 import { assetSymbol, emphasizeAddress, formatCountdown, formatDuration, sanitize } from "../render/money.js";
 import { renderQr } from "../render/qr.js";
 import { amountOrPrompt, guardCancel, loadAssetsWithSpinner, resolveAssetOrPrompt } from "./shared.js";
+import { enrichNoRoute } from "../core/alternatives.js";
 import { renderSwapTimeline, stateSteps, finalStateBlock } from "./status-render.js";
+import { persistedState, unverifiedSuccess } from "./status.js";
 import type { LeoKitApi } from "../core/api.js";
 import type { AssetToken, ReceiptV1, RouteOffer } from "../core/types.js";
 import { sharedQuoteArgs } from "./quote.js";
@@ -452,19 +454,20 @@ async function runSignerLane(d: SignerLaneDeps): Promise<void> {
     quoteId: d.quoteId,
     signal: abort.signal,
     timeoutMs: null,
+    expectation: { expectedOutDisplay: d.offer.expectedOutDisplay, createdAt: null },
     onUpdate: (status) => {
       updateReceipt(receiptId, {
-        last_state: status.state,
+        last_state: persistedState(status),
         last_checked_at: new Date().toISOString(),
         last_error: status.error,
         tx_hashes: { source: sourceTx, destination: status.destTxHash, refund: status.refundTxHash }
       });
-      process.stdout.write(renderSwapTimeline(stateSteps(status.state)) + "\n");
+      process.stdout.write(renderSwapTimeline(stateSteps(status.state, { unverified: unverifiedSuccess(status) })) + "\n");
     }
   });
   process.removeListener("SIGINT", onSigint);
   process.stdout.write("\n" + finalStateBlock(final, receiptId, d.toToken.symbol, d.signer.account.address) + "\n");
-  if (final.state === "success") p.outro(`Swap complete. Receipt: ${accent(receiptId)}`);
+  if (final.state === "success" && !unverifiedSuccess(final)) p.outro(`Swap complete. Receipt: ${accent(receiptId)}`);
 }
 
 export default defineCommand({
@@ -496,8 +499,12 @@ export default defineCommand({
       }
 
       const tokens = await loadAssetsWithSpinner(ctx, api);
-      const fromToken = await resolveAssetOrPrompt(ctx, tokens, args.from, "What do you want to send?");
-      const toToken = await resolveAssetOrPrompt(ctx, tokens, args.to, "What do you want to receive?");
+      const fromToken = await resolveAssetOrPrompt(ctx, tokens, args.from, "What do you want to send?", {
+        side: "from", amount: args.amount, other: args.to
+      });
+      const toToken = await resolveAssetOrPrompt(ctx, tokens, args.to, "What do you want to receive?", {
+        side: "to", amount: args.amount, other: fromToken.identifier
+      });
       const amount = await amountOrPrompt(ctx, args.amount, fromToken);
       const slippage = args["slippage-bps"] ? Number(args["slippage-bps"]) : undefined;
       const quoteParams = { from_asset: fromToken.identifier, to_asset: toToken.identifier, amount, slippage_bps: slippage };
@@ -508,11 +515,22 @@ export default defineCommand({
       let set;
       try {
         set = await streamQuoteSet(api, quoteParams, {
-          onOffer: (o, n) => spin?.message(`Streaming routes — ${n} found (${sanitize(o.protocol)} just arrived)`)
+          onOffer: (o, n) => spin?.message(`Streaming routes — ${n} found (${sanitize(o.protocol)} just arrived)`),
+          onRetry: () => spin?.message("Connection hiccup — retrying")
         });
       } catch (err) {
-        spin?.stop("No routes", 1);
-        throw err;
+        const noRoute = err instanceof Error && "code" in err && err.code === "NO_ROUTE";
+        spin?.stop(noRoute ? "No routes" : "Could not fetch routes", 1);
+        throw await enrichNoRoute(err, {
+          api,
+          tokens,
+          from: fromToken,
+          to: toToken,
+          amount,
+          command: "swap",
+          onStart: () => spin?.start("Looking for a pair that does route"),
+          onDone: (n) => spin?.stop(n > 0 ? `${n} alternative${n === 1 ? "" : "s"} found` : "No alternative found", n > 0 ? 0 : 1)
+        });
       }
       const laneOf = (o: RouteOffer): ReturnType<typeof executionLane> => executionLane(o, fromToken.identifier);
       const payable = set.offers.filter((o) => laneOf(o) === "deposit_address");
@@ -1071,6 +1089,7 @@ export default defineCommand({
       // changes update the same lines instead of stacking new blocks.
       let watchHeight = 0;
       let watchState: import("../core/types.js").SwapState = "pending";
+      let watchUnverified = false;
       const paintWatch = (): void => {
         if (!process.stdout.isTTY) return;
         const lines: string[] = [];
@@ -1083,7 +1102,7 @@ export default defineCommand({
           );
           lines.push("");
         }
-        lines.push(renderSwapTimeline(stateSteps(watchState)));
+        lines.push(renderSwapTimeline(stateSteps(watchState, { unverified: watchUnverified })));
         const block = lines.join("\n");
         if (watchHeight > 0) process.stdout.write(`\x1b[${watchHeight}A\x1b[0J`);
         process.stdout.write(block + "\n");
@@ -1097,13 +1116,17 @@ export default defineCommand({
         quoteId,
         signal: abort.signal,
         timeoutMs: null,
+        expectation: {
+          expectedOutDisplay: receipt.expected_out_display,
+          createdAt: Date.parse(receipt.created_at) || null
+        },
         onUpdate: (status) => {
           if (status.state !== "pending" && expiryTimer) {
             clearTimeout(expiryTimer);
             expiryTimer = null;
           }
           updateReceipt(receiptId, {
-            last_state: status.state,
+            last_state: persistedState(status),
             last_checked_at: new Date().toISOString(),
             last_error: status.error,
             tx_hashes: {
@@ -1113,8 +1136,9 @@ export default defineCommand({
             }
           });
           watchState = status.state;
+          watchUnverified = unverifiedSuccess(status);
           if (process.stdout.isTTY) paintWatch();
-          else process.stdout.write(renderSwapTimeline(stateSteps(status.state)) + "\n");
+          else process.stdout.write(renderSwapTimeline(stateSteps(status.state, { unverified: watchUnverified })) + "\n");
         }
       });
       if (ticker) clearInterval(ticker);
@@ -1157,7 +1181,7 @@ export default defineCommand({
       }
 
       process.stdout.write("\n" + finalStateBlock(final, receiptId, toToken.symbol, refundAddress || null) + "\n");
-      if (final.state === "success") {
+      if (final.state === "success" && !unverifiedSuccess(final)) {
         p.outro(`Swap complete. Receipt: ${accent(receiptId)}`);
       }
     } catch (err) {
